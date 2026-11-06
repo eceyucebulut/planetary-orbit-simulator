@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Planetary Orbit Simulator — Kepler's Laws</title>
+<style>
+  :root{
+    --bg:#05070f; --panel:#0d1220; --edge:#1d2740; --txt:#dfe6f5; --dim:#8fa0c0;
+    --accent:#6ea8ff; --green:#38d996; --orange:#ffb454; --cyan:#59d7ff; --red:#ff6b81;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{background:var(--bg); color:var(--txt);
+       font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  #app{display:flex; height:100vh}
+  #stage{flex:1; position:relative; min-width:0}
+  #canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
+  #panel{width:350px; overflow-y:auto; padding:16px 18px 40px;
+         background:var(--panel); border-left:1px solid var(--edge)}
+  h1{font-size:17px; letter-spacing:.3px}
+  h2{font-size:12px; text-transform:uppercase; letter-spacing:1.2px;
+     color:var(--dim); margin:22px 0 8px; border-bottom:1px solid var(--edge); padding-bottom:4px}
+  .sub{color:var(--dim); font-size:12px; margin-top:2px}
+  .btnrow{display:flex; gap:8px; margin-top:14px}
+  button{flex:1; padding:9px 0; font-size:14px; color:var(--txt); cursor:pointer;
+         background:#161f36; border:1px solid var(--edge); border-radius:8px}
+  button:hover{background:#1d2a4a}
+  button.primary{background:#1c3a6e; border-color:#2c5aa0}
+  button.primary:hover{background:#24519c}
+  .ctl{margin-top:13px}
+  .ctl label{display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px}
+  .ctl output{font-family:ui-monospace,Menlo,monospace; color:var(--accent)}
+  input[type=range]{width:100%; accent-color:var(--accent)}
+  .chk{display:flex; align-items:center; gap:8px; margin-top:8px; font-size:13px; cursor:pointer}
+  .chk input{accent-color:var(--accent)}
+  dl{display:grid; grid-template-columns:auto 1fr; column-gap:12px; row-gap:3px;
+     font-size:12.5px; margin-top:8px}
+  dt{color:var(--dim)}
+  dd{font-family:ui-monospace,Menlo,monospace; text-align:right; font-size:12px;
+     overflow-wrap:anywhere}
+  #sectorOut{color:var(--cyan)} #driftOut{color:var(--green)}
+  .eq{font-family:Georgia,"Times New Roman",serif; font-style:italic;
+      background:#101728; border:1px solid var(--edge); border-radius:8px;
+      padding:8px 10px; margin-top:7px; font-size:14px; overflow-wrap:anywhere}
+  .eq b{font-style:normal; color:var(--dim); font-size:11px;
+        font-family:-apple-system,sans-serif; display:block; margin-bottom:2px}
+  .note{font-size:12px; color:var(--dim); margin-top:8px}
+  .v{color:var(--green)} .a{color:var(--orange)}
+  @media (max-width:900px){
+    #app{flex-direction:column}
+    #stage{min-height:55vh; flex:none; height:55vh}
+    #panel{width:auto; border-left:none; border-top:1px solid var(--edge)}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <main id="stage"><canvas id="canvas"></canvas></main>
+  <aside id="panel">
+    <h1>Planetary Orbit Simulator</h1>
+    <p class="sub">Two-body Kepler problem &middot; Newtonian gravity &middot;
+       velocity-Verlet &middot; SI units</p>
+
+    <div class="btnrow">
+      <button id="playBtn" class="primary" type="button">&#10074;&#10074; Pause</button>
+      <button id="resetBtn" type="button">&#8635; Reset</button>
+    </div>
+
+    <div class="ctl">
+      <label for="eccSlider">Eccentricity <i>e</i> <output id="eccOut">0.60</output></label>
+      <input type="range" id="eccSlider" min="0" max="0.9" step="0.01" value="0.6">
+    </div>
+    <div class="ctl">
+      <label for="speedSlider">Simulation speed <output id="speedOut">1.0&times;</output></label>
+      <input type="range" id="speedSlider" min="1" max="200" step="1" value="10">
+    </div>
+
+    <label class="chk"><input type="checkbox" id="chkVectors" checked>
+      Show velocity / acceleration vectors</label>
+    <label class="chk"><input type="checkbox" id="chkSectors" checked>
+      Kepler's 2nd law: sweep equal areas (each &#916;t = T/8)</label>
+    <label class="chk"><input type="checkbox" id="chkTrail" checked>
+      Show traversed path</label>
+    <label class="chk"><input type="checkbox" id="chkGrid" checked>
+      Show grid (0.25 AU)</label>
+
+    <h2>Orbit geometry</h2>
+    <dl>
+      <dt>Semi-major axis a</dt><dd id="semiOut">—</dd>
+      <dt>Semi-minor axis b</dt><dd id="bOut">—</dd>
+      <dt>Perihelion a(1&minus;e)</dt><dd id="rpOut">—</dd>
+      <dt>Aphelion a(1+e)</dt><dd id="raOut">—</dd>
+      <dt>Period T</dt><dd id="periodOut">—</dd>
+    </dl>
+
+    <h2>Live state (integrated)</h2>
+    <dl>
+      <dt>Sun&ndash;planet distance r</dt><dd id="rOut">—</dd>
+      <dt>Speed |v|</dt><dd id="vOut">—</dd>
+      <dt>|acceleration|</dt><dd id="accOut">—</dd>
+      <dt>Gravity force on planet</dt><dd id="fOut">—</dd>
+      <dt>Simulated time</dt><dd id="timeOut">—</dd>
+      <dt>Orbits completed</dt><dd id="orbitsOut">—</dd>
+      <dt>Energy drift (&epsilon;&minus;&epsilon;&#8320;)/&epsilon;&#8320;</dt><dd id="driftOut">—</dd>
+    </dl>
+
+    <h2>Kepler's second law</h2>
+    <dl>
+      <dt>&#916;t per shaded sector</dt><dd id="dtSectOut">—</dd>
+      <dt>Swept area per sector<br>(measured / theory &pi;ab/8)</dt><dd id="sectorOut">—</dd>
+    </dl>
+    <p class="note">The planet's Sun-facing triangle swept in each equal time
+      interval has the same area — it moves fastest at perihelion and slowest
+      at aphelion.</p>
+    <h2>Equations used</h2>
+    <div class="eq"><b>Newton's law of universal gravitation</b>
+      F = G&thinsp;m&thinsp;M / r&sup2;</div>
+    <div class="eq"><b>Planet's acceleration (equation of motion)</b>
+      <span class="a">a</span> = &minus;(G M / r&sup3;)&thinsp;<b>r</b></div>
+    <div class="eq"><b>Numerical integration (velocity-Verlet)</b>
+      x<sub>n+1</sub> = x<sub>n</sub> + v<sub>n</sub>&thinsp;&Delta;t + &frac12;&thinsp;a<sub>n</sub>&thinsp;&Delta;t&sup2;<br>
+      v<sub>n+1</sub> = v<sub>n</sub> + &frac12;&thinsp;(a<sub>n</sub> + a<sub>n+1</sub>)&thinsp;&Delta;t</div>
+    <div class="eq"><b>Kepler's third law (period)</b>
+      T = 2&pi;&thinsp;&radic;(a&sup3; / G M)</div>
+    <div class="eq"><b>Vis-viva equation (live check)</b>
+      v&sup2; = G M (2/r &minus; 1/a)</div>
+    <div class="eq"><b>Initial conditions at perihelion</b>
+      r<sub>p</sub> = a(1&minus;e),&ensp;
+      v<sub>p</sub> = &radic;[ G M (1+e) / a(1&minus;e) ]</div>
+    <div class="eq"><b>Kepler's second law (constant areal rate)</b>
+      dA/dt = L/2 = &frac12;&thinsp;&radic;[G M a (1&minus;e&sup2;)]
+      = &pi;ab / T</div>
+    <div class="eq"><b>Orbit shape r(&nu;) = p / (1 + e cos &nu;)</b>,
+      p = a(1&minus;e&sup2;)</div>
+    <p class="note">Constants: G = 6.67430&times;10&#8315;&sup1;&sup1; m&sup3; kg&#8315;&sup1; s&#8315;&sup2;,
+      M&#8857; = 1.98892&times;10&sup3;&#8304; kg, 1 AU = 1.495978707&times;10&sup1;&sup1; m.
+      The planet is a test particle on a 1 AU semi-major axis orbit; its mass
+      (1 M&#8853;) is used only for the force readout.</p>
+  </aside>
+</div>
+
+<script>
+"use strict";
+/* =========================================================================
+   PHYSICS BACKGROUND
+   ---------------------------------------------------------------------
+   A planet of negligible mass moves around the Sun under Newton's law of
+   universal gravitation:   F = G m M / r^2, directed along -r_hat.
+   The resulting acceleration is independent of the planet's mass:
+          a = -(G M / r^3) r          (G M = mu = Sun's gravitational param.)
+   Integrating THIS law numerically automatically produces Kepler's laws:
+   the trajectory is a conic section (ellipse for E < 0), the areal rate
+   dA/dt = |r x v| / 2 is exactly conserved (central force), and
+   T = 2 pi sqrt(a^3 / mu). Nothing here forces an ellipse - it emerges.
+
+   NUMERICAL INTEGRATION — VELOCITY-VERLET (2nd order, symplectic):
+       x(t+dt) = x(t) + v(t) dt + 1/2 a(t) dt^2
+       a(t+dt) = -(mu / |x(t+dt)|^3) x(t+dt)     (new accel at NEW position)
+       v(t+dt) = v(t) + 1/2 [a(t) + a(t+dt)] dt
+   Why Verlet instead of Euler? Explicit Euler is 1st order and adds energy
+   every step, so the planet spirals outward. Velocity-Verlet is symplectic:
+   it preserves phase-space volume and the relative orbital energy merely
+   oscillates within a tiny bounded band (O(dt^2)) instead of drifting, so
+   the orbit stays closed even after thousands of revolutions. The panel
+   shows the measured energy drift as a live accuracy diagnostic.
+   The step dt is FIXED for a given setting (>=6000 steps per orbit,
+   subdivided further for high-eccentricity orbits, where the planet
+   whips through perihelion on a much shorter timescale) and decoupled
+   from the frame rate via an accumulator, so physics is frame-rate
+   independent and perfectly reproducible.
+
+   UNITS: all integration is strict SI (metres, kilograms, seconds).
+   AU / km / days / years appear only in the display layer.
+   ========================================================================= */
+
+/* ---------- physical constants (SI) ---------- */
+const G      = 6.67430e-11;    // gravitational constant, m^3 kg^-1 s^-2
+const M_SUN  = 1.98892e30;     // solar mass, kg
+const MU     = G * M_SUN;      // gravitational parameter GM, m^3 s^-2
+const AU     = 1.495978707e11; // astronomical unit, m
+const M_EARTH= 5.97219e24;     // kg — used only to display F = m|a|
+const DAY    = 86400;          // s
+
+/* ---------- simulation setup ---------- */
+const A_SEMI   = AU;      // semi-major axis held fixed at 1 AU
+const N_SECT   = 8;       // shaded Kepler sectors per orbit (equal Δt = T/8)
+let ecc   = 0.6;          // orbital eccentricity (slider)
+let speed = 1.0;          // time multiplier; 1x = 1 orbit per 12 real seconds
+let running = true;
+
+/* derived quantities (recomputed when e changes) */
+let D = {};               // {T, b, rp, ra, vp, sectorTime, sectorArea}
+function derive(e) {
+  const T  = 2 * Math.PI * Math.sqrt(A_SEMI ** 3 / MU);   // Kepler III
+  const b  = A_SEMI * Math.sqrt(1 - e * e);               // semi-minor axis
+  const rp = A_SEMI * (1 - e), ra = A_SEMI * (1 + e);     // apsides
+  // Perihelion launch speed from vis-viva at r = rp:
+  //   v_p^2 = mu(2/rp - 1/a) = mu(1+e) / [a(1-e)]
+  const vp = Math.sqrt(MU * (1 + e) / (A_SEMI * (1 - e)));
+  return { T, b, rp, ra, vp,
+           sectorTime: T / N_SECT,
+           sectorArea: Math.PI * A_SEMI * b / N_SECT };   // whole ellipse/N
+}
+
+/* ---------- dynamic state (SI) ---------- */
+const st = { x:0, y:0, vx:0, vy:0, ax:0, ay:0, t:0, eps0:0 };
+let trail = [];           // drawn path samples (world m)
+let sectors = [];         // completed equal-time sectors {pts, area, i}
+let sectorPts = [];       // points of the sector currently being swept
+let nextBoundary = 0;     // sim-time at which the current sector closes
+let stepCount = 0;
+let sectorsMade = 0;      // cumulative closed-sector count (fixes its colour)
+let trailStride = 8, sectorStride = 6;  // sampling strides in steps
+
+/* Gravitational acceleration a = -(mu/r^3) r  [m s^-2] */
+function gravity(x, y) {
+  const r2 = x * x + y * y, r = Math.sqrt(r2), k = -MU / (r2 * r);
+  return { ax: k * x, ay: k * y };
+}
+/* Specific orbital energy eps = v^2/2 - mu/r  (= -mu/2a theoretically) */
+function energy() {
+  return 0.5 * (st.vx * st.vx + st.vy * st.vy) - MU / Math.hypot(st.x, st.y);
+}
+
+/* Reset: place planet AT PERIHELION on the +x axis moving in +y.
+   With r = a(1-e) and v = v_p (perihelion launch speed) the exact
+   solution is an ellipse of semi-major axis a and eccentricity e. */
+function reset() {
+  D = derive(ecc);
+  /* Fixed step size: >=6000 steps per orbit is ample for low e, but the
+     perihelion timescale shrinks as (1-e)^(3/2), so subdivide DT with it
+     (capped) to keep the Verlet energy error tiny even at e = 0.9. */
+  const nSteps = Math.min(48000, Math.max(6000,
+                       Math.round(6000 / Math.pow(1 - ecc, 1.5))));
+  DT = D.T / nSteps;
+  trailStride  = Math.max(1, Math.round(nSteps / 760));
+  sectorStride = Math.max(1, Math.round(nSteps / N_SECT / 100));
+  st.x = D.rp; st.y = 0; st.vx = 0; st.vy = D.vp;
+  const g = gravity(st.x, st.y); st.ax = g.ax; st.ay = g.ay;
+  st.t = 0; st.eps0 = energy();
+  trail = []; sectors = []; sectorPts = [st.x, st.y];
+  nextBoundary = D.sectorTime; stepCount = 0; sectorsMade = 0; timeLeftover = 0;
+  fitView();
+  // static geometry readouts
+  set("semiOut", A_SEMI.toExponential(4) + " m = 1.000 AU");
+  set("bOut", (D.b / AU).toFixed(4) + " AU");
+  set("rpOut", (D.rp / AU).toFixed(4) + " AU");
+  set("raOut", (D.ra / AU).toFixed(4) + " AU");
+  set("periodOut", D.T.toExponential(4) + " s = " + (D.T / 365.25 / DAY).toFixed(4) + " yr");
+  set("dtSectOut", D.sectorTime.toExponential(3) + " s = " +
+                   (D.sectorTime / DAY).toFixed(1) + " days");
+}
+
+/* One velocity-Verlet step of fixed size dt, plus sampling of the trail,
+   the swept-sector polygon and the equal-time sector boundaries. */
+function verlet(dt) {
+  const x0 = st.x, y0 = st.y;                          // position at t
+  st.x += st.vx * dt + 0.5 * st.ax * dt * dt;
+  st.y += st.vy * dt + 0.5 * st.ay * dt * dt;
+  const g = gravity(st.x, st.y);
+  st.vx += 0.5 * (st.ax + g.ax) * dt;
+  st.vy += 0.5 * (st.ay + g.ay) * dt;
+  st.ax = g.ax; st.ay = g.ay;
+  st.t += dt;
+  stepCount++;
+  if (chkTrail.checked && stepCount % trailStride === 0) {
+    trail.push(st.x, st.y);
+    if (trail.length > 2 * 760) trail.splice(0, 2);   // ~1 orbit of trail
+  }
+  if (chkSectors.checked) {
+    if (stepCount % sectorStride === 0) sectorPts.push(st.x, st.y);
+    while (st.t >= nextBoundary) {        // sector boundary hit: interpolate
+      const f = Math.min(Math.max((nextBoundary - (st.t - dt)) / dt, 0), 1);
+      closeSector(x0 + (st.x - x0) * f, y0 + (st.y - y0) * f);
+      nextBoundary += D.sectorTime;
+    }
+  }
+}
+
+/* Close the sector that ends exactly at the interpolated boundary point
+   (bx,by) and measure its area with the shoelace formula applied to the
+   fan (Sun, p1 ... pn): the polygon closes through the origin, whose two
+   edge terms vanish, leaving sum 1/2 cross(p_i, p_i+1) = swept area.   */
+function closeSector(bx, by) {
+  const pts = sectorPts.concat([bx, by]);
+  if (pts.length >= 6) {
+    let s = 0;
+    for (let j = 0; j + 3 < pts.length; j += 2)
+      s += pts[j] * pts[j + 3] - pts[j + 1] * pts[j + 2];
+    sectors.push({ pts: pts.slice(), area: Math.abs(0.5 * s),
+                   i: sectorsMade++ });
+    if (sectors.length > N_SECT) sectors.shift();      // keep one orbit's worth
+  }
+  sectorPts = [bx, by];      // next sector starts exactly at this boundary
+}
+
+/* ---------- UI plumbing ---------- */
+const $ = id => document.getElementById(id);
+function set(id, txt) { $(id).textContent = txt; }
+const canvas = $("canvas"), ctx = canvas.getContext("2d"), stage = $("stage");
+const chkTrail = $("chkTrail"), chkSectors = $("chkSectors"),
+      chkVectors = $("chkVectors"), chkGrid = $("chkGrid");
+const dpr = Math.max(window.devicePixelRatio || 1, 1);
+let W = 0, H = 0, stars = [];
+
+/* world->pixel projection; Sun sits at world (0,0) */
+const view = { scale: 1, cx: 0, cy: 0 };
+function fitView() {
+  // frame the whole ellipse (centre at x = -a·e) with margin
+  const pad = 1.22;
+  const x0 = -D.ra * pad, x1 = D.rp * pad, yM = D.b * pad;
+  view.scale = Math.min(W / (x1 - x0), H / (2 * yM));
+  view.cx = W / 2 - 0.5 * (x0 + x1) * view.scale;
+  view.cy = H / 2;
+}
+const px = wx => view.cx + wx * view.scale;
+const py = wy => view.cy - wy * view.scale;   // flip y: math +y = screen up
+
+function resize() {
+  W = stage.clientWidth; H = stage.clientHeight;
+  canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  // deterministic star field
+  let seed = 42;
+  const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  stars = [];
+  for (let i = 0; i < 140; i++)
+    stars.push({ x: rnd() * W, y: rnd() * H, r: 0.4 + rnd() * 0.9, a: 0.15 + rnd() * 0.5 });
+  fitView();
+}
+window.addEventListener("resize", resize);
+
+/* ---------- main loop: fixed physics dt, accumulator over real time ---------- */
+let DT = (2 * Math.PI * Math.sqrt(A_SEMI ** 3 / MU)) / 6000;  // set in reset()
+const ORBIT_SEC_AT_1X = 12;   // real seconds for one orbit at speed 1x
+let timeLeftover = 0, lastFrame = performance.now();
+
+function frame(now) {
+  const dtReal = Math.min((now - lastFrame) / 1000, 0.1);
+  lastFrame = now;
+  if (running) {
+    const simPerReal = speed * D.T / ORBIT_SEC_AT_1X;  // sim s per real s
+    timeLeftover += dtReal * simPerReal;
+    let n = Math.floor(timeLeftover / DT);
+    timeLeftover -= n * DT;
+    if (n > 30000) { n = 30000; timeLeftover = 0; }     // frame hitch guard
+    for (let i = 0; i < n; i++) verlet(DT);
+  }
+  draw();
+  readouts();
+  requestAnimationFrame(frame);
+}
+
+/* ---------- drawing ---------- */
+function draw() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = "#05070f";
+  ctx.fillRect(0, 0, W, H);
+  for (const s of stars) {
+    ctx.globalAlpha = s.a; ctx.fillStyle = "#cdd8f0";
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  drawGridAxes();
+
+  // eccentricity vector e = [(v^2-mu/r) r - (r.v) v] / mu points to
+  // perihelion; use it for markers + reference ellipse (robust to drift)
+  const r = Math.hypot(st.x, st.y), v2 = st.vx * st.vx + st.vy * st.vy;
+  const rv = st.x * st.vx + st.y * st.vy;
+  const ex = ((v2 - MU / r) * st.x - rv * st.vx) / MU;
+  const ey = ((v2 - MU / r) * st.y - rv * st.vy) / MU;
+  const eMag = Math.hypot(ex, ey);
+  const ux = eMag > 1e-9 ? ex / eMag : 1, uy = eMag > 1e-9 ? ey / eMag : 0;
+
+  if (chkSectors.checked) drawSectors();
+  drawReferenceEllipse(ux, uy, Math.min(eMag, 0.95));
+  if (chkTrail.checked) drawTrail();
+  drawApsides(ux, uy);
+  drawSun();
+  drawPlanet();
+  if (chkVectors.checked) drawVectors();
+  drawLegend(v2, r);
+}
+
+function drawGridAxes() {
+  const sc = view.scale;
+  const wx0 = (0 - view.cx) / sc, wx1 = (W - view.cx) / sc;
+  const wy0 = (view.cy - H) / sc, wy1 = view.cy / sc;
+  if (chkGrid.checked) {
+    ctx.strokeStyle = "rgba(110,140,200,0.10)"; ctx.lineWidth = 1;
+    const q = 0.25 * AU;
+    for (let x = Math.ceil(wx0 / q) * q; x <= wx1; x += q)
+      line(px(x), 0, px(x), H);
+    for (let y = Math.ceil(wy0 / q) * q; y <= wy1; y += q)
+      line(0, py(y), W, py(y));
+  }
+  // coordinate axes through the Sun
+  ctx.strokeStyle = "rgba(140,170,220,0.35)";
+  line(0, py(0), W, py(0)); line(px(0), 0, px(0), H);
+  ctx.fillStyle = "rgba(150,175,225,0.7)";
+  ctx.font = "10px ui-monospace,Menlo,monospace";
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  const q2 = 0.5 * AU;
+  for (let x = Math.ceil(wx0 / q2) * q2; x <= wx1; x += q2)
+    if (Math.abs(x) > 1e3) ctx.fillText((x / AU).toFixed(1), px(x), py(0) + 4);
+  ctx.textAlign = "left";
+  for (let y = Math.ceil(wy0 / q2) * q2; y <= wy1; y += q2)
+    if (Math.abs(y) > 1e3) ctx.fillText((y / AU).toFixed(1), px(0) + 4, py(y) - 5);
+  ctx.fillText("x (AU)", W - 46, py(0) + 4);
+  ctx.fillText("y (AU)", px(0) + 6, 4);
+}
+function line(x1, y1, x2, y2) {
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+}
+
+/* exact analytic ellipse r(nu) = a(1-e^2)/(1+e cos nu), rotated so its
+   perihelion lies along (ux,uy): a visual check on the integrator */
+function drawReferenceEllipse(ux, uy, e) {
+  const p = A_SEMI * (1 - e * e);
+  ctx.strokeStyle = "rgba(200,215,255,0.30)";
+  ctx.setLineDash([5, 5]); ctx.lineWidth = 1; ctx.beginPath();
+  for (let i = 0; i <= 180; i++) {
+    const nu = i / 180 * 2 * Math.PI, rr = p / (1 + e * Math.cos(nu));
+    const X = rr * Math.cos(nu), Y = rr * Math.sin(nu);
+    const wx = X * ux - Y * uy, wy = X * uy + Y * ux;
+    i ? ctx.lineTo(px(wx), py(wy)) : ctx.moveTo(px(wx), py(wy));
+  }
+  ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
+}
+
+function drawSectors() {
+  /* Eight distinct, strongly contrasting hues, one per sector of the
+     orbit. Because exactly N_SECT = 8 are kept on screen and each sector
+     keeps its creation colour, all eight appear together and adjacent
+     equal-area wedges are easy to compare (Kepler's second law). */
+  const palette = ["#ff5c7a", "#ffcf4d", "#3ddc84", "#35c4f0",
+                   "#9d7bff", "#ff8c42", "#4f8dff", "#b9e769"];
+  ctx.lineWidth = 1.25;
+  for (const sec of sectors) {
+    const col = palette[sec.i % palette.length];
+    ctx.beginPath();
+    ctx.moveTo(px(0), py(0));
+    for (let i = 0; i < sec.pts.length; i += 2)
+      ctx.lineTo(px(sec.pts[i]), py(sec.pts[i + 1]));
+    ctx.closePath();
+    ctx.globalAlpha = 0.28; ctx.fillStyle = col; ctx.fill();
+    ctx.globalAlpha = 0.9;  ctx.strokeStyle = col; ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+function drawTrail() {
+  ctx.strokeStyle = "rgba(120,190,255,0.5)"; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < trail.length; i += 2)
+    i ? ctx.lineTo(px(trail[i]), py(trail[i + 1]))
+      : ctx.moveTo(px(trail[i]), py(trail[i + 1]));
+  ctx.stroke();
+}
+function drawApsides(ux, uy) {
+  ctx.font = "11px -apple-system,sans-serif"; ctx.textAlign = "center";
+  ctx.fillStyle = "#ffd166"; dot(ux * D.rp, uy * D.rp, 3.5, "#ffd166");
+  ctx.fillText("perihelion  " + (D.rp / AU).toFixed(2) + " AU",
+               px(ux * D.rp), py(uy * D.rp) - 9);
+  ctx.fillStyle = "#9d8cff"; dot(-ux * D.ra, -uy * D.ra, 3.5, "#9d8cff");
+  ctx.fillText("aphelion  " + (D.ra / AU).toFixed(2) + " AU",
+               px(-ux * D.ra), py(-uy * D.ra) + 15);
+}
+function dot(wx, wy, rad, col) {
+  ctx.fillStyle = col; ctx.beginPath();
+  ctx.arc(px(wx), py(wy), rad, 0, 7); ctx.fill();
+}
+function drawSun() {
+  const x = px(0), y = py(0);
+  const g = ctx.createRadialGradient(x, y, 1, x, y, 26);
+  g.addColorStop(0, "rgba(255,236,170,1)");
+  g.addColorStop(0.35, "rgba(255,190,70,0.55)");
+  g.addColorStop(1, "rgba(255,170,40,0)");
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 26, 0, 7); ctx.fill();
+  ctx.fillStyle = "#ffe08a"; ctx.beginPath(); ctx.arc(x, y, 7, 0, 7); ctx.fill();
+  ctx.fillStyle = "rgba(255,224,138,0.85)"; ctx.font = "11px sans-serif";
+  ctx.textAlign = "left"; ctx.fillText("Sun (focus)", x + 12, y - 8);
+}
+function drawPlanet() {
+  dot(st.x, st.y, 5, "#5ab0ff");
+  ctx.strokeStyle = "rgba(220,240,255,0.9)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(px(st.x), py(st.y), 5, 0, 7); ctx.stroke();
+}
+
+/* Velocity (green) and acceleration (orange) arrows. Their pixel scales
+   are normalised to the perihelion values v_p and mu/rp^2 of the CURRENT
+   orbit so relative magnitudes stay comparable everywhere on the path. */
+function drawVectors() {
+  const vRef = D.vp, aRef = MU / (D.rp * D.rp), L = 95;
+  arrow(st.x, st.y, st.x + st.vx / vRef * (L / view.scale),
+                       st.y + st.vy / vRef * (L / view.scale),
+        "#38d996", "v");
+  arrow(st.x, st.y, st.x + st.ax / aRef * (L / view.scale),
+                       st.y + st.ay / aRef * (L / view.scale),
+        "#ffb454", "a");
+}
+function arrow(wx, wy, wx2, wy2, col, label) {
+  const x1 = px(wx), y1 = py(wy), x2 = px(wx2), y2 = py(wy2);
+  const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy);
+  if (len < 4) return;
+  const ux = dx / len, uy = dy / len;
+  ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 2;
+  line(x1, y1, x2, y2);
+  ctx.beginPath();                               // arrow head
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - 9 * ux + 4.5 * uy, y2 - 9 * uy - 4.5 * ux);
+  ctx.lineTo(x2 - 9 * ux - 4.5 * uy, y2 - 9 * uy + 4.5 * ux);
+  ctx.closePath(); ctx.fill();
+  ctx.font = "italic 13px Georgia,serif"; ctx.textAlign = "left";
+  ctx.fillText(label, x2 + 6 * ux, y2 + 6 * uy + 4);
+}
+function drawLegend(v2, r) {
+  ctx.font = "11px ui-monospace,Menlo,monospace"; ctx.textAlign = "left";
+  ctx.fillStyle = "#38d996";
+  ctx.fillText("|v| = " + (Math.sqrt(v2) / 1000).toFixed(2) + " km/s", 12, H - 30);
+  ctx.fillStyle = "#ffb454";
+  const aMag = MU / (r * r);
+  ctx.fillText("|a| = " + aMag.toExponential(3) + " m/s²", 12, H - 16);
+  ctx.fillStyle = "rgba(150,170,210,0.6)";
+  ctx.fillText("arrows scaled to perihelion values", 150, H - 16);
+}
+
+/* ---------- live readouts ---------- */
+function readouts() {
+  const r = Math.hypot(st.x, st.y), v = Math.hypot(st.vx, st.vy);
+  set("rOut", (r / AU).toFixed(4) + " AU");
+  set("vOut", (v / 1000).toFixed(2) + " km/s");
+  set("accOut", (MU / (r * r)).toExponential(3) + " m/s²");
+  set("fOut", (M_EARTH * MU / (r * r)).toExponential(3) + " N");
+  set("timeOut", (st.t / DAY).toFixed(1) + " d = " +
+                 (st.t / 365.25 / DAY).toFixed(3) + " yr");
+  set("orbitsOut", (st.t / D.T).toFixed(3));
+  const eps = energy();
+  set("driftOut", ((eps / st.eps0 - 1) * 100).toExponential(2) + " %");
+  if (sectors.length) {
+    let avg = 0; for (const s of sectors) avg += s.area;
+    avg /= sectors.length;
+    set("sectorOut", avg.toExponential(3) + " m²  /  " +
+                     D.sectorArea.toExponential(3) + " m²");
+  } else if (chkSectors.checked) {
+    set("sectorOut", "sweeping… (first sector closes at t = T/8)");
+  } else {
+    set("sectorOut", "—");
+  }
+}
+
+/* ---------- controls ---------- */
+$("playBtn").addEventListener("click", e => {
+  running = !running;
+  e.currentTarget.innerHTML = running ? "&#10074;&#10074; Pause" : "&#9654; Play";
+});
+$("resetBtn").addEventListener("click", reset);
+$("eccSlider").addEventListener("input", e => {
+  ecc = +e.target.value;
+  $("eccOut").textContent = ecc.toFixed(2);
+  reset();                       // relaunch from perihelion with new e
+});
+$("speedSlider").addEventListener("input", e => {
+  speed = +e.target.value / 10;  // 0.1x … 20x
+  $("speedOut").textContent = speed.toFixed(1) + "\u00d7  (" +
+    (speed * D.T / ORBIT_SEC_AT_1X / DAY).toFixed(1) + " days/s)";
+});
+for (const id of ["chkSectors"])
+  $(id).addEventListener("change", () => {   // clean restart of the sweep
+    sectors = []; sectorPts = [st.x, st.y]; sectorsMade = 0;
+    nextBoundary = st.t + D.sectorTime;
+  });
+
+/* ---------- start ---------- */
+resize();
+reset();
+$("speedOut").textContent = "1.0\u00d7  (" +
+  (D.T / ORBIT_SEC_AT_1X / DAY).toFixed(1) + " days/s)";
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
